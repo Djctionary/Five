@@ -43,6 +43,12 @@ SQL Editor 里执行一次即可；或者本地跑 `DATABASE_URL=<连接串> npm
 | `APP_TIMEZONE` | 全组共用的时区，IANA 名称，默认 `Asia/Shanghai` |
 | `MIGRATE_TOKEN` | 可选。设了之后 `/api/init?token=<它>` 可以建表，建完就删掉 |
 
+## 排查
+
+`/api/health` 会返回数据库是否连得上、四张表在不在、以及几个环境变量有没有配，
+不返回任何表里的数据。页面上遇到数据库问题时会直接把错误写在界面上，而不是
+一个 Next.js 的 digest。
+
 ## 结构
 
 ```

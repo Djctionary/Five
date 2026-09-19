@@ -25,3 +25,26 @@ export const sql: NeonQueryFunction<false, false> = new Proxy(
     get: (_target, prop) => Reflect.get(client_(), prop),
   },
 );
+
+/**
+ * Turns a driver error into something safe to show. Postgres error codes are
+ * not sensitive, but the message can carry the connection target, so only the
+ * first line is kept and anything resembling a URL is stripped.
+ */
+export function describeDbError(error: unknown): { code: string; message: string } {
+  const raw_code =
+    typeof error === "object" && error !== null && "code" in error
+      ? (error as { code: unknown }).code
+      : undefined;
+  const code = raw_code === undefined || raw_code === null ? "" : String(raw_code);
+
+  const raw = error instanceof Error ? error.message : String(error);
+  const message = raw.split("\n")[0].replace(/[a-z]+:\/\/\S+/gi, "<url>").slice(0, 200);
+
+  return { code, message };
+}
+
+/** Postgres reports a missing table as 42P01. */
+export function isMissingTable(error: unknown): boolean {
+  return describeDbError(error).code === "42P01";
+}

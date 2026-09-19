@@ -62,7 +62,13 @@ export async function destroySession(): Promise<void> {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   if (token) {
-    await sql`delete from sessions where token = ${token}`;
+    // Dropping the cookie matters more than deleting the row, so a database
+    // failure here must not stop the user from signing out.
+    try {
+      await sql`delete from sessions where token = ${token}`;
+    } catch {
+      // ignored on purpose
+    }
   }
   jar.delete(SESSION_COOKIE);
 }

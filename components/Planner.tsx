@@ -88,6 +88,7 @@ export function Planner({
   );
   const [rangeStart, setRangeStart] = useState<{ day: string; slot: number } | null>(null);
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
+  const [errorText, setErrorText] = useState("");
 
   // State updates are async, so reads during a drag go through a ref.
   const masksRef = useRef(masks);
@@ -102,8 +103,10 @@ export function Planner({
           if (!result.ok) throw new Error(result.error);
         }
         setStatus("idle");
+        setErrorText("");
         router.refresh();
-      } catch {
+      } catch (error) {
+        setErrorText(error instanceof Error ? error.message : String(error));
         setStatus("error");
       }
     });
@@ -284,6 +287,7 @@ export function Planner({
     startSaving(async () => {
       const result = await clearWeek(weekStart, addDays(weekStart, 6));
       setStatus(result.ok ? "idle" : "error");
+      setErrorText(result.ok ? "" : result.error);
       router.refresh();
     });
   }
@@ -314,10 +318,11 @@ export function Planner({
 
         <div className="ml-auto flex items-center gap-2">
           <span
-            className="text-xs"
+            className="max-w-[22rem] truncate text-xs"
+            title={errorText || undefined}
             style={{ color: status === "error" ? "#e11d48" : "var(--muted)" }}
           >
-            {status === "error" ? "保存失败" : saving ? "保存中" : "已保存"}
+            {status === "error" ? `保存失败：${errorText}` : saving ? "保存中" : "已保存"}
           </span>
           <button className="btn btn-ghost text-xs" onClick={onClearWeek}>
             清空本周
