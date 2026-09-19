@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+}
+
+:root {
+  --bg: #fbfbfc;
+  --panel: #ffffff;
+  --border: #e6e6ea;
+  --border-strong: #d4d4d9;
+  --text: #17171b;
+  --muted: #74747e;
+  --subtle: #f3f3f5;
+  --accent: #4f46e5;
+  --accent-soft: #eef2ff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c0c0e;
+    --panel: #141417;
+    --border: #26262b;
+    --border-strong: #35353c;
+    --text: #f2f2f4;
+    --muted: #8e8e99;
+    --subtle: #1b1b1f;
+    --accent: #818cf8;
+    --accent-soft: #1e1b3a;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-ink: var(--text);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  /* The week grid is drag-selected, so the browser must not start a text
+     selection or a long-press callout while the pointer is down. */
+  .no-select {
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    /* pan-y keeps the grid scrollable by touch; painting there is tap-based. */
+    touch-action: pan-y;
+  }
+
+}
+
+@layer components {
+  input,
+  button,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+
+  .field {
+    width: 100%;
+    border-radius: 0.625rem;
+    border: 1px solid var(--border-strong);
+    background: var(--panel);
+    padding: 0.625rem 0.75rem;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+
+  .field:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border-radius: 0.625rem;
+    padding: 0.55rem 0.9rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+    cursor: pointer;
+  }
+
+  .btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border: 1px solid transparent;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.07);
+  }
+
+  .btn-ghost {
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--subtle);
+  }
+}
