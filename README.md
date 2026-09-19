@@ -21,14 +21,18 @@ npm run db:init              # 建表
 npm run dev
 ```
 
-`npm run db:init` 会把 `db/schema.sql` 应用到 `DATABASE_URL` 指向的库，可以重复执行。
-
 ## 部署到 Vercel
 
 1. 把仓库导入 Vercel
 2. 在项目的 Storage 里添加 Neon，`DATABASE_URL` 会自动注入
-3. 手动加两个环境变量：`INVITE_CODE`，以及可选的 `APP_TIMEZONE`（默认 `Asia/Shanghai`）
-4. 部署完成后在本地跑一次 `DATABASE_URL=<生产库连接串> npm run db:init` 建表
+3. 加环境变量 `INVITE_CODE`，以及一个临时的 `MIGRATE_TOKEN`（随便一串长一点的随机字符）
+4. 部署完成后访问 `https://<你的域名>/api/init?token=<MIGRATE_TOKEN>`，
+   返回 `{"ok":true,...}` 就说明表建好了
+5. 回到环境变量里删掉 `MIGRATE_TOKEN`，重新部署一次。没有这个变量时该接口直接返回 404
+
+建表也可以不通过这个接口：`npm run db:sql` 会把建表语句打印出来，粘到 Neon 控制台的
+SQL Editor 里执行一次即可；或者本地跑 `DATABASE_URL=<连接串> npm run db:init`。
+三条路等价，语句全是 `if not exists`，重复执行没有副作用。
 
 ## 环境变量
 
@@ -37,14 +41,16 @@ npm run dev
 | `DATABASE_URL` | Neon Postgres 连接串 |
 | `INVITE_CODE` | 注册密钥，只在服务端比对 |
 | `APP_TIMEZONE` | 全组共用的时区，IANA 名称，默认 `Asia/Shanghai` |
+| `MIGRATE_TOKEN` | 可选。设了之后 `/api/init?token=<它>` 可以建表，建完就删掉 |
 
 ## 结构
 
 ```
-app/            页面与 server actions
-components/     界面组件
-lib/            数据库、鉴权、时间与头像工具
-db/schema.sql   表结构
+app/              页面、server actions 与 /api/init
+components/       界面组件
+lib/              数据库、鉴权、时间与头像工具
+lib/schema.mjs    表结构，建表的唯一来源
+scripts/          建表与打印建表语句的脚本
 ```
 
 时间以本地日期加 0-47 的半小时格号存储，不存时区偏移，因此全组必须在同一个时区。

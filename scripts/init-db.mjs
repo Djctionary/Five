@@ -1,7 +1,7 @@
-// Applies db/schema.sql to the database in DATABASE_URL.
+// Applies the schema to the database in DATABASE_URL.
 // Usage: DATABASE_URL=... node scripts/init-db.mjs
-import { readFileSync } from "node:fs";
 import { neon } from "@neondatabase/serverless";
+import { SCHEMA_STATEMENTS } from "../lib/schema.mjs";
 
 const url = process.env.DATABASE_URL;
 if (!url) {
@@ -10,17 +10,10 @@ if (!url) {
 }
 
 const sql = neon(url);
-const schema = readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8");
 
-// The HTTP driver runs one statement per request, so split on top-level semicolons.
-const statements = schema
-  .split(/;\s*(?:\r?\n|$)/)
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-for (const statement of statements) {
+for (const statement of SCHEMA_STATEMENTS) {
   await sql.query(statement);
-  console.log("ok:", statement.split("\n")[0].slice(0, 70));
+  console.log("ok:", statement.split("\n")[0].trim().slice(0, 70));
 }
 
-console.log(`\nApplied ${statements.length} statements.`);
+console.log(`\nApplied ${SCHEMA_STATEMENTS.length} statements.`);
