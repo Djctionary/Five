@@ -41,6 +41,24 @@ export function blocksToMask(blocks: Block[]): boolean[] {
 
 // --- Dates are handled as plain YYYY-MM-DD strings in a single shared timezone. ---
 
+export const DEFAULT_TIME_ZONE = "Asia/Shanghai";
+
+/**
+ * Falls back to the default when APP_TIMEZONE is unset, blank or not a real
+ * IANA name. An empty environment variable is a configured-but-empty value,
+ * which `??` would pass straight through to Intl and crash the page.
+ */
+export function resolveTimeZone(value: string | undefined): string {
+  const candidate = value?.trim();
+  if (!candidate) return DEFAULT_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: candidate });
+    return candidate;
+  } catch {
+    return DEFAULT_TIME_ZONE;
+  }
+}
+
 /** Today in the single timezone the whole group shares. */
 export function todayInZone(timeZone: string): string {
   // en-CA formats as YYYY-MM-DD.

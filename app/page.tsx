@@ -4,7 +4,7 @@ import { SetupNotice } from "@/components/SetupNotice";
 import { getCurrentUser, type CurrentUser } from "@/lib/auth";
 import { describeDbError, isMissingTable } from "@/lib/db";
 import { getWeekAvailability, listMembers, type Member } from "@/lib/queries";
-import { isDateKey, startOfWeek, todayInZone } from "@/lib/time";
+import { isDateKey, resolveTimeZone, startOfWeek, todayInZone } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +37,7 @@ export default async function HomePage({
   let availability: Awaited<ReturnType<typeof getWeekAvailability>>;
 
   const { week } = await searchParams;
-  const today = todayInZone(process.env.APP_TIMEZONE ?? "Asia/Shanghai");
+  const today = todayInZone(resolveTimeZone(process.env.APP_TIMEZONE));
   const weekStart = startOfWeek(isDateKey(week) ? week : today);
 
   // A database that is unreachable or not yet migrated would otherwise surface

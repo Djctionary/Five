@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { describeDbError, sql } from "@/lib/db";
+import { resolveTimeZone } from "@/lib/time";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,7 +17,13 @@ export async function GET() {
     databaseUrl: hasUrl,
     inviteCode: Boolean(process.env.INVITE_CODE),
     migrateToken: Boolean(process.env.MIGRATE_TOKEN),
-    timezone: process.env.APP_TIMEZONE ?? "Asia/Shanghai",
+    // Reports the value actually in use, and flags a configured value that
+    // had to be discarded.
+    timezone: resolveTimeZone(process.env.APP_TIMEZONE),
+    timezoneRaw: process.env.APP_TIMEZONE ?? null,
+    timezoneIgnored:
+      Boolean(process.env.APP_TIMEZONE?.trim()) &&
+      resolveTimeZone(process.env.APP_TIMEZONE) !== process.env.APP_TIMEZONE?.trim(),
   };
 
   if (!hasUrl) {

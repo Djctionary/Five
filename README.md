@@ -40,7 +40,7 @@ SQL Editor 里执行一次即可；或者本地跑 `DATABASE_URL=<连接串> npm
 | --- | --- |
 | `DATABASE_URL` | Neon Postgres 连接串 |
 | `INVITE_CODE` | 注册密钥，只在服务端比对 |
-| `APP_TIMEZONE` | 全组共用的时区，IANA 名称，默认 `Asia/Shanghai` |
+| `APP_TIMEZONE` | 全组共用的时区，IANA 名称。留空或填错会退回 `Asia/Shanghai` |
 | `MIGRATE_TOKEN` | 可选。设了之后 `/api/init?token=<它>` 可以建表，建完就删掉 |
 
 ## 排查
