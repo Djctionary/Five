@@ -296,7 +296,7 @@ export function Planner({
     <div className="mx-auto w-full max-w-6xl px-4 pb-24 pt-6 sm:px-6">
       <header className="flex items-center justify-between gap-4">
         <div className="flex items-baseline gap-3">
-          <span className="text-lg font-semibold tracking-tight">Five</span>
+          <span className="text-lg font-semibold tracking-tight">Soul V</span>
           <span className="hidden text-sm text-muted sm:inline">找到我们都有空的时间</span>
         </div>
         <ProfileMenu me={me} />
