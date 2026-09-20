@@ -65,19 +65,44 @@
     color: #fff;
   }
 
-  /* The week grid is drag-selected, so the browser must not start a text
+  /* The calendar is drag-selected, so the browser must not start a text
      selection or a long-press callout while the pointer is down. */
   .no-select {
     user-select: none;
     -webkit-user-select: none;
     -webkit-touch-callout: none;
-    /* pan-y keeps the grid scrollable by touch; painting there is tap-based. */
-    touch-action: pan-y;
+    /* The calendar never scrolls, so every touch gesture on it is ours. */
+    touch-action: none;
   }
 
 }
 
 @layer components {
+  /* The stretch of a day when everyone shown is free. Deliberately unlike any
+     member colour so it reads as a state of the day, not as another person. */
+  .shared-band {
+    background: repeating-linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 12%, transparent) 0 5px,
+      transparent 5px 10px
+    );
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent);
+    border-radius: 0.25rem;
+  }
+
+  .shared-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    background: repeating-linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 45%, transparent) 0 3px,
+      transparent 3px 6px
+    );
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+
   input,
   button,
   select {

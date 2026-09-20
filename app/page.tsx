@@ -3,8 +3,8 @@ import { Planner } from "@/components/Planner";
 import { SetupNotice } from "@/components/SetupNotice";
 import { getCurrentUser, type CurrentUser } from "@/lib/auth";
 import { describeDbError, isMissingTable } from "@/lib/db";
-import { getWeekAvailability, listMembers, type Member } from "@/lib/queries";
-import { isDateKey, resolveTimeZone, startOfWeek, todayInZone } from "@/lib/time";
+import { getAvailability, listMembers, type Member } from "@/lib/queries";
+import { addDays, isDateKey, resolveTimeZone, startOfWeek, todayInZone } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
 
@@ -30,15 +30,19 @@ function dbNotice(error: unknown) {
 export default async function HomePage({
   searchParams,
 }: {
-  searchParams: Promise<{ week?: string }>;
+  searchParams: Promise<{ d?: string }>;
 }) {
   let user: CurrentUser | null;
   let members: Member[];
-  let availability: Awaited<ReturnType<typeof getWeekAvailability>>;
+  let availability: Awaited<ReturnType<typeof getAvailability>>;
 
-  const { week } = await searchParams;
+  const { d } = await searchParams;
   const today = todayInZone(resolveTimeZone(process.env.APP_TIMEZONE));
-  const weekStart = startOfWeek(isDateKey(week) ? week : today);
+  const anchor = isDateKey(d) ? d : today;
+
+  // Fetched wide enough that paging a few days either way needs no round trip.
+  const rangeFrom = addDays(startOfWeek(anchor), -7);
+  const rangeTo = addDays(startOfWeek(anchor), 20);
 
   // A database that is unreachable or not yet migrated would otherwise surface
   // as an opaque digest in production, so report what actually went wrong.
@@ -54,7 +58,7 @@ export default async function HomePage({
   try {
     [members, availability] = await Promise.all([
       listMembers(),
-      getWeekAvailability(weekStart),
+      getAvailability(rangeFrom, rangeTo),
     ]);
   } catch (error) {
     return dbNotice(error);
@@ -69,14 +73,14 @@ export default async function HomePage({
   };
 
   return (
-    <main className="min-h-screen">
-      <Planner
-        me={me}
-        members={members}
-        availability={availability}
-        weekStart={weekStart}
-        today={today}
-      />
-    </main>
+    <Planner
+      me={me}
+      members={members}
+      availability={availability}
+      anchor={anchor}
+      rangeFrom={rangeFrom}
+      rangeTo={rangeTo}
+      today={today}
+    />
   );
 }

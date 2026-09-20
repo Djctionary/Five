@@ -3,334 +3,373 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Avatar } from "@/components/Avatar";
+import { BlockDialog, type DialogState } from "@/components/BlockDialog";
 import { ProfileMenu } from "@/components/ProfileMenu";
-import { clearWeek, saveDay } from "@/app/actions/availability";
-import type { AvailabilityMap, Member } from "@/lib/queries";
-import { userColor } from "@/lib/colors";
 import {
-  SLOTS_PER_DAY,
+  clearRange,
+  createBlock,
+  deleteBlock,
+  updateBlockNote,
+} from "@/app/actions/availability";
+import { userColor } from "@/lib/colors";
+import type { AvailabilityMap, Member } from "@/lib/queries";
+import {
+  VIEW_FIRST_SLOT,
+  VIEW_LAST_SLOT,
   addDays,
-  blockLabel,
-  blocksToMask,
-  formatWeekRange,
-  maskToBlocks,
   monthDayLabel,
+  percentToSlot,
   slotLabel,
-  weekDays,
+  slotToPercent,
+  startOfWeek,
   weekdayName,
+  type Block,
 } from "@/lib/time";
 
-const SLOT_HEIGHT = 14; // px per 30 minutes
-const DEFAULT_SCROLL_HOUR = 8;
+const WIDE_QUERY = "(min-width: 768px)";
+const WIDE_COLUMNS = 7;
+const NARROW_COLUMNS = 3;
+const SWIPE_THRESHOLD = 48;
 
-type DayMask = Record<string, boolean[]>;
-
-function emptyMask(): boolean[] {
-  return new Array<boolean>(SLOTS_PER_DAY).fill(false);
-}
-
-function buildMasks(map: AvailabilityMap, userId: string, days: string[]): DayMask {
-  const result: DayMask = {};
-  for (const day of days) {
-    result[day] = blocksToMask(map[userId]?.[day] ?? []);
-  }
-  return result;
-}
+type DayBlocks = Record<string, Block[]>;
+type Preview = { day: string; from: number; to: number };
+type Gesture =
+  | { kind: "select"; day: string; rect: DOMRect; from: number; to: number }
+  | { kind: "swipe"; x: number }
+  | { kind: "undecided"; day: string; rect: DOMRect; from: number; x: number; y: number };
 
 export function Planner({
   me,
   members,
   availability,
-  weekStart,
+  anchor,
+  rangeFrom,
+  rangeTo,
   today,
 }: {
   me: Member;
   members: Member[];
   availability: AvailabilityMap;
-  weekStart: string;
+  anchor: string;
+  rangeFrom: string;
+  rangeTo: string;
   today: string;
 }) {
   const router = useRouter();
-  const days = useMemo(() => weekDays(weekStart), [weekStart]);
-  const others = useMemo(() => members.filter((m) => m.id !== me.id), [members, me.id]);
 
-  const [masks, setMasks] = useState<DayMask>(() => buildMasks(availability, me.id, days));
+  const [columns, setColumns] = useState(WIDE_COLUMNS);
+  const [viewStart, setViewStart] = useState(() => startOfWeek(anchor));
   const [visible, setVisible] = useState<string[]>(() => members.map((m) => m.id));
-  const [showOthers, setShowOthers] = useState(true);
-  const [saving, startSaving] = useTransition();
+  const [mine, setMine] = useState<DayBlocks>(() => ({ ...(availability[me.id] ?? {}) }));
+  const [dialog, setDialog] = useState<DialogState | null>(null);
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [error, setError] = useState("");
+  const [pending, startTransition] = useTransition();
 
-  // The server is the source of truth: re-sync whenever the week or the data changes.
+  // The column count depends on the viewport, which only the browser knows, so
+  // the first paint uses the wide layout and this corrects it.
   useEffect(() => {
-    setMasks(buildMasks(availability, me.id, days));
-  }, [availability, me.id, days]);
+    const query = window.matchMedia(WIDE_QUERY);
+    const apply = () => {
+      setColumns(query.matches ? WIDE_COLUMNS : NARROW_COLUMNS);
+      setViewStart(query.matches ? startOfWeek(anchor) : anchor);
+    };
+    apply();
+    query.addEventListener("change", apply);
+    return () => query.removeEventListener("change", apply);
+  }, [anchor]);
+
+  useEffect(() => {
+    setMine({ ...(availability[me.id] ?? {}) });
+  }, [availability, me.id]);
 
   useEffect(() => {
     setVisible((current) => {
       const known = new Set(members.map((m) => m.id));
       const kept = current.filter((id) => known.has(id));
       const added = members.filter((m) => !current.includes(m.id)).map((m) => m.id);
-      return kept.length + added.length === current.length ? current : [...kept, ...added];
+      return added.length === 0 && kept.length === current.length ? current : [...kept, ...added];
     });
   }, [members]);
 
-  const scrollerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = scrollerRef.current;
-    if (el) el.scrollTop = DEFAULT_SCROLL_HOUR * 2 * SLOT_HEIGHT;
-  }, []);
-
-  // --- marking -------------------------------------------------------------
-  // Mouse and pen drag across cells. Touch uses two taps to pick a range,
-  // because a drag gesture there is needed for scrolling the grid.
-  const dragRef = useRef<{ paint: boolean; touched: Set<string> } | null>(null);
-  const tapRef = useRef<{ day: string; slot: number; x: number; y: number; moved: boolean } | null>(
-    null,
+  const days = useMemo(
+    () => Array.from({ length: columns }, (_, i) => addDays(viewStart, i)),
+    [viewStart, columns],
   );
-  const [rangeStart, setRangeStart] = useState<{ day: string; slot: number } | null>(null);
-  const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
-  const [errorText, setErrorText] = useState("");
 
-  // State updates are async, so reads during a drag go through a ref.
-  const masksRef = useRef(masks);
-  masksRef.current = masks;
+  const mineRef = useRef(mine);
+  mineRef.current = mine;
 
-  function persist(days_: string[]) {
-    setStatus("saving");
-    startSaving(async () => {
-      try {
-        for (const day of days_) {
-          const result = await saveDay(day, masksRef.current[day] ?? emptyMask());
-          if (!result.ok) throw new Error(result.error);
-        }
-        setStatus("idle");
-        setErrorText("");
-        router.refresh();
-      } catch (error) {
-        setErrorText(error instanceof Error ? error.message : String(error));
-        setStatus("error");
-      }
-    });
-  }
-
-  function applyDay(day: string, next: boolean[]) {
-    setMasks((current) => ({ ...current, [day]: next }));
-    masksRef.current = { ...masksRef.current, [day]: next };
-    persist([day]);
-  }
-
-  function applyCell(day: string, slot: number, paint: boolean) {
-    setMasks((current) => {
-      const mask = current[day] ?? emptyMask();
-      if (mask[slot] === paint) return current;
-      const next = mask.slice();
-      next[slot] = paint;
-      return { ...current, [day]: next };
-    });
-  }
-
-  function cellFromPoint(x: number, y: number): { day: string; slot: number } | null {
-    const target = document.elementFromPoint(x, y);
-    const cell = target?.closest<HTMLElement>("[data-day]");
-    if (!cell?.dataset.day || cell.dataset.slot === undefined) return null;
-    return { day: cell.dataset.day, slot: Number(cell.dataset.slot) };
-  }
-
-  function handleTap(day: string, slot: number) {
-    const mask = masksRef.current[day] ?? emptyMask();
-
-    if (mask[slot]) {
-      // Tapping inside a marked block removes that whole block.
-      let start = slot;
-      let end = slot;
-      while (start > 0 && mask[start - 1]) start--;
-      while (end < SLOTS_PER_DAY - 1 && mask[end + 1]) end++;
-      const next = mask.slice();
-      for (let i = start; i <= end; i++) next[i] = false;
-      setRangeStart(null);
-      applyDay(day, next);
-      return;
+  // --- navigation ----------------------------------------------------------
+  function goTo(nextStart: string) {
+    const last = addDays(nextStart, columns - 1);
+    if (nextStart < rangeFrom || last > rangeTo) {
+      router.push(`/?d=${nextStart}`);
+    } else {
+      setViewStart(nextStart);
     }
-
-    if (!rangeStart || rangeStart.day !== day) {
-      setRangeStart({ day, slot });
-      return;
-    }
-
-    const from = Math.min(rangeStart.slot, slot);
-    const to = Math.max(rangeStart.slot, slot);
-    const next = mask.slice();
-    for (let i = from; i <= to; i++) next[i] = true;
-    setRangeStart(null);
-    applyDay(day, next);
   }
 
-  function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    const cell = cellFromPoint(event.clientX, event.clientY);
-    if (!cell) return;
-
-    if (event.pointerType === "touch") {
-      tapRef.current = { ...cell, x: event.clientX, y: event.clientY, moved: false };
-      return;
-    }
-
-    if (event.button !== 0) return;
-    event.preventDefault();
-    // Capture so the whole drag keeps reporting to this grid.
-    event.currentTarget.setPointerCapture(event.pointerId);
-    const paint = !(masksRef.current[cell.day]?.[cell.slot] ?? false);
-    dragRef.current = { paint, touched: new Set([cell.day]) };
-    setRangeStart(null);
-    applyCell(cell.day, cell.slot, paint);
+  function shift(direction: number) {
+    goTo(addDays(viewStart, direction * columns));
   }
 
-  function onPointerMove(event: React.PointerEvent) {
-    const tap = tapRef.current;
-    if (tap) {
-      if (Math.abs(event.clientX - tap.x) > 8 || Math.abs(event.clientY - tap.y) > 8) {
-        tap.moved = true;
-      }
-      return;
-    }
-
-    const drag = dragRef.current;
-    if (!drag) return;
-    const cell = cellFromPoint(event.clientX, event.clientY);
-    if (!cell) return;
-    drag.touched.add(cell.day);
-    applyCell(cell.day, cell.slot, drag.paint);
+  function goToday() {
+    goTo(columns === WIDE_COLUMNS ? startOfWeek(today) : today);
   }
 
-  function onPointerUp() {
-    const tap = tapRef.current;
-    if (tap) {
-      tapRef.current = null;
-      if (!tap.moved) handleTap(tap.day, tap.slot);
-      return;
-    }
-
-    const drag = dragRef.current;
-    dragRef.current = null;
-    if (drag) persist([...drag.touched]);
-  }
-
-  // --- overlap -------------------------------------------------------------
+  // --- members -------------------------------------------------------------
   const visibleSet = useMemo(() => new Set(visible), [visible]);
+  const lanes = useMemo(() => {
+    const shown = members.filter((m) => visibleSet.has(m.id));
+    const mineShown = shown.some((m) => m.id === me.id);
+    const others = shown.filter((m) => m.id !== me.id);
 
-  const counts = useMemo(() => {
-    const result: Record<string, number[]> = {};
-    for (const day of days) {
-      const row = new Array<number>(SLOTS_PER_DAY).fill(0);
-      for (const member of members) {
-        if (!visibleSet.has(member.id)) continue;
-        const mask =
-          member.id === me.id
-            ? (masks[day] ?? emptyMask())
-            : blocksToMask(availability[member.id]?.[day] ?? []);
-        for (let i = 0; i < SLOTS_PER_DAY; i++) if (mask[i]) row[i]++;
-      }
-      result[day] = row;
+    const result: { member: Member; left: number; width: number; isMe: boolean }[] = [];
+    if (mineShown && others.length > 0) {
+      result.push({ member: me, left: 1.5, width: 45, isMe: true });
+      const span = 48 / others.length;
+      others.forEach((member, i) =>
+        result.push({ member, left: 49.5 + i * span, width: span - 2, isMe: false }),
+      );
+    } else if (mineShown) {
+      result.push({ member: me, left: 1.5, width: 97, isMe: true });
+    } else {
+      const span = 97 / Math.max(1, others.length);
+      others.forEach((member, i) =>
+        result.push({ member, left: 1.5 + i * span, width: span - 2, isMe: false }),
+      );
     }
     return result;
-  }, [days, members, visibleSet, masks, availability, me.id]);
+  }, [members, visibleSet, me]);
 
-  const othersCounts = useMemo(() => {
-    const result: Record<string, number[]> = {};
+  function blocksOf(member: Member, day: string): Block[] {
+    const source = member.id === me.id ? mine : (availability[member.id] ?? {});
+    return source[day] ?? [];
+  }
+
+  /** Runs where every shown member is free. Nothing to mark below two people. */
+  const shared = useMemo(() => {
+    const shown = members.filter((m) => visibleSet.has(m.id));
+    if (shown.length < 2) return {} as Record<string, { start: number; end: number }[]>;
+
+    const result: Record<string, { start: number; end: number }[]> = {};
     for (const day of days) {
-      const row = new Array<number>(SLOTS_PER_DAY).fill(0);
-      for (const member of others) {
-        if (!visibleSet.has(member.id)) continue;
-        const mask = blocksToMask(availability[member.id]?.[day] ?? []);
-        for (let i = 0; i < SLOTS_PER_DAY; i++) if (mask[i]) row[i]++;
+      const counts = new Array<number>(VIEW_LAST_SLOT).fill(0);
+      for (const member of shown) {
+        for (const block of blocksOf(member, day)) {
+          for (let i = Math.max(block.start, VIEW_FIRST_SLOT); i < Math.min(block.end, VIEW_LAST_SLOT); i++) {
+            counts[i]++;
+          }
+        }
       }
-      result[day] = row;
-    }
-    return result;
-  }, [days, others, visibleSet, availability]);
-
-  const visibleCount = visible.length;
-
-  const commonSlots = useMemo(() => {
-    if (visibleCount < 2) return [];
-    const found: { day: string; start: number; end: number }[] = [];
-    for (const day of days) {
-      const row = counts[day] ?? [];
+      const runs: { start: number; end: number }[] = [];
       let start = -1;
-      for (let i = 0; i <= SLOTS_PER_DAY; i++) {
-        const full = i < SLOTS_PER_DAY && row[i] === visibleCount;
+      for (let i = VIEW_FIRST_SLOT; i <= VIEW_LAST_SLOT; i++) {
+        const full = i < VIEW_LAST_SLOT && counts[i] === shown.length;
         if (full && start === -1) start = i;
         if (!full && start !== -1) {
-          found.push({ day, start, end: i });
+          runs.push({ start, end: i });
           start = -1;
         }
       }
+      result[day] = runs;
     }
-    return found;
-  }, [counts, days, visibleCount]);
+    return result;
+    // blocksOf closes over mine and availability, both listed below.
+  }, [days, members, visibleSet, mine, availability, me.id]);
 
-  const myBlocks = useMemo(
-    () => days.flatMap((day) => maskToBlocks(masks[day] ?? emptyMask()).map((b) => ({ day, ...b }))),
-    [days, masks],
-  );
+  // --- pointer -------------------------------------------------------------
+  const gestureRef = useRef<Gesture | null>(null);
 
-  function goto(offset: number) {
-    router.push(offset === 0 ? "/" : `/?week=${addDays(weekStart, offset * 7)}`);
+  function slotAt(rect: DOMRect, clientY: number): number {
+    return percentToSlot((clientY - rect.top) / rect.height);
   }
 
-  function onClearWeek() {
-    if (!confirm("清空本周你标记的所有空闲时间？")) return;
-    const cleared: DayMask = {};
-    for (const day of days) cleared[day] = emptyMask();
-    setMasks(cleared);
-    masksRef.current = cleared;
-    setRangeStart(null);
-    setStatus("saving");
-    startSaving(async () => {
-      const result = await clearWeek(weekStart, addDays(weekStart, 6));
-      setStatus(result.ok ? "idle" : "error");
-      setErrorText(result.ok ? "" : result.error);
+  function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (target.closest("[data-own-block]")) return; // handled by the block's own click
+    const column = target.closest<HTMLElement>("[data-day]");
+    if (!column?.dataset.day) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+
+    const rect = column.getBoundingClientRect();
+    const from = slotAt(rect, event.clientY);
+    try {
+      // Keeps the rest of the gesture reporting to this element. Not fatal if
+      // the browser refuses, so it must not abort the handler.
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // ignored on purpose
+    }
+
+    if (event.pointerType === "touch") {
+      gestureRef.current = {
+        kind: "undecided",
+        day: column.dataset.day,
+        rect,
+        from,
+        x: event.clientX,
+        y: event.clientY,
+      };
+      return;
+    }
+
+    event.preventDefault();
+    gestureRef.current = { kind: "select", day: column.dataset.day, rect, from, to: from };
+    setPreview({ day: column.dataset.day, from, to: from });
+  }
+
+  function onPointerMove(event: React.PointerEvent) {
+    const gesture = gestureRef.current;
+    if (!gesture) return;
+
+    if (gesture.kind === "undecided") {
+      const dx = event.clientX - gesture.x;
+      const dy = event.clientY - gesture.y;
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
+        gestureRef.current = { kind: "swipe", x: gesture.x };
+        return;
+      }
+      if (Math.abs(dy) > 8) {
+        const to = slotAt(gesture.rect, event.clientY);
+        gestureRef.current = { kind: "select", day: gesture.day, rect: gesture.rect, from: gesture.from, to };
+        setPreview({ day: gesture.day, from: gesture.from, to });
+      }
+      return;
+    }
+
+    if (gesture.kind === "select") {
+      // The rect is the column the drag started in, so a selection never
+      // crosses into another day however far sideways the pointer goes.
+      gesture.to = slotAt(gesture.rect, event.clientY);
+      setPreview({ day: gesture.day, from: gesture.from, to: gesture.to });
+    }
+  }
+
+  function onPointerUp(event: React.PointerEvent) {
+    const gesture = gestureRef.current;
+    gestureRef.current = null;
+    if (!gesture) return;
+
+    if (gesture.kind === "swipe") {
+      const dx = event.clientX - gesture.x;
+      if (Math.abs(dx) > SWIPE_THRESHOLD) shift(dx < 0 ? 1 : -1);
+      return;
+    }
+
+    if (gesture.kind === "undecided") return; // a tap that never became a drag
+
+    // Read the range from the gesture, not from state: a click is a down and
+    // an up with no render in between, so the state would still be empty.
+    setPreview(null);
+    const start = Math.min(gesture.from, gesture.to);
+    const end = Math.max(gesture.from, gesture.to) + 1;
+    setError("");
+    setDialog({ mode: "create", day: gesture.day, block: { id: 0, start, end, note: null } });
+  }
+
+  // --- mutations -----------------------------------------------------------
+  function run(action: () => Promise<{ ok: true } | { ok: false; error: string }>) {
+    startTransition(async () => {
+      const result = await action();
+      if (result.ok) {
+        setDialog(null);
+        setError("");
+        router.refresh();
+      } else {
+        setError(result.error);
+      }
+    });
+  }
+
+  function onSaveDialog(note: string) {
+    if (!dialog) return;
+    const { day, block, mode } = dialog;
+
+    if (mode === "create") {
+      const optimistic: Block = { id: -Date.now(), start: block.start, end: block.end, note: note.trim() || null };
+      setMine((current) => {
+        const kept = (current[day] ?? []).filter((b) => b.start >= block.end || b.end <= block.start);
+        return { ...current, [day]: [...kept, optimistic].sort((a, b) => a.start - b.start) };
+      });
+      run(() => createBlock(day, block.start, block.end, note));
+      return;
+    }
+
+    setMine((current) => ({
+      ...current,
+      [day]: (current[day] ?? []).map((b) =>
+        b.id === block.id ? { ...b, note: note.trim() || null } : b,
+      ),
+    }));
+    run(() => updateBlockNote(block.id, note));
+  }
+
+  function onDeleteDialog() {
+    if (!dialog) return;
+    const { day, block } = dialog;
+    setMine((current) => ({
+      ...current,
+      [day]: (current[day] ?? []).filter((b) => b.id !== block.id),
+    }));
+    run(() => deleteBlock(block.id));
+  }
+
+  function onClear() {
+    const from = days[0];
+    const to = days[days.length - 1];
+    setMine((current) => {
+      const next = { ...current };
+      for (const day of days) next[day] = [];
+      return next;
+    });
+    startTransition(async () => {
+      const result = await clearRange(from, to);
+      if (!result.ok) setError(result.error);
       router.refresh();
     });
   }
 
-  return (
-    <div className="mx-auto w-full max-w-6xl px-4 pb-24 pt-6 sm:px-6">
-      <header className="flex items-center justify-between gap-4">
-        <div className="flex items-baseline gap-3">
-          <span className="text-lg font-semibold tracking-tight">Soul V</span>
-          <span className="hidden text-sm text-muted sm:inline">找到我们都有空的时间</span>
-        </div>
-        <ProfileMenu me={me} />
-      </header>
+  // --- render --------------------------------------------------------------
+  const hours = useMemo(
+    () => Array.from({ length: (VIEW_LAST_SLOT - VIEW_FIRST_SLOT) / 2 + 1 }, (_, i) => VIEW_FIRST_SLOT + i * 2),
+    [],
+  );
 
-      <section className="mt-6 flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1">
-          <button className="btn btn-ghost px-2.5" onClick={() => goto(-1)} aria-label="上一周">
+  const rangeLabel = `${monthDayLabel(days[0])} - ${monthDayLabel(days[days.length - 1])}`;
+
+  return (
+    <div className="flex h-dvh flex-col overflow-hidden">
+      <header className="flex items-center gap-3 px-3 pt-3 sm:px-5">
+        <span className="text-base font-semibold tracking-tight">Soul V</span>
+
+        <div className="ml-auto flex items-center gap-1">
+          <button className="btn btn-ghost px-2 py-1" onClick={() => shift(-1)} aria-label="前一段">
             ‹
           </button>
-          <button className="btn btn-ghost px-3" onClick={() => goto(0)}>
-            本周
+          <button className="btn btn-ghost px-2.5 py-1 text-xs" onClick={goToday}>
+            今天
           </button>
-          <button className="btn btn-ghost px-2.5" onClick={() => goto(1)} aria-label="下一周">
+          <button className="btn btn-ghost px-2 py-1" onClick={() => shift(1)} aria-label="后一段">
             ›
           </button>
         </div>
-        <span className="text-sm text-muted">{formatWeekRange(weekStart)}</span>
 
-        <div className="ml-auto flex items-center gap-2">
-          <span
-            className="max-w-[22rem] truncate text-xs"
-            title={errorText || undefined}
-            style={{ color: status === "error" ? "#e11d48" : "var(--muted)" }}
-          >
-            {status === "error" ? `保存失败：${errorText}` : saving ? "保存中" : "已保存"}
-          </span>
-          <button className="btn btn-ghost text-xs" onClick={onClearWeek}>
-            清空本周
-          </button>
-        </div>
-      </section>
+        <span className="hidden text-sm text-muted sm:inline">{rangeLabel}</span>
 
-      <section className="mt-4 flex flex-wrap items-center gap-2">
+        <button
+          className="btn btn-ghost px-2.5 py-1 text-xs"
+          onClick={onClear}
+          disabled={pending}
+        >
+          {columns === WIDE_COLUMNS ? "清空本周" : "清空这三天"}
+        </button>
+
+        <ProfileMenu me={me} />
+      </header>
+
+      <div className="flex items-center gap-2 overflow-x-auto px-3 py-2.5 sm:px-5">
         {members.map((member) => {
           const on = visibleSet.has(member.id);
           const color = userColor(member.colorIndex);
@@ -344,204 +383,183 @@ export function Planner({
                     : [...current, member.id],
                 )
               }
-              className="flex items-center gap-2 rounded-full border px-2.5 py-1 text-sm transition"
+              className="flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-1 text-xs transition"
               style={{
                 borderColor: on ? color.solid : "var(--border)",
                 background: on ? color.soft : "transparent",
-                opacity: on ? 1 : 0.5,
+                opacity: on ? 1 : 0.45,
               }}
             >
               <Avatar
                 style={member.avatarStyle}
                 seed={member.avatarSeed}
-                size={20}
+                size={18}
                 colorIndex={member.colorIndex}
               />
               <span>{member.username}</span>
-              {member.id === me.id ? <span className="text-xs text-muted">你</span> : null}
             </button>
           );
         })}
 
-        <label className="ml-auto flex cursor-pointer items-center gap-2 text-sm text-muted">
-          <input
-            type="checkbox"
-            checked={showOthers}
-            onChange={(e) => setShowOthers(e.target.checked)}
-            className="accent-[var(--accent)]"
-          />
-          显示他人时间
-        </label>
-      </section>
+        <span className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs text-muted">
+          <span className="shared-swatch" />
+          都有空
+        </span>
+      </div>
 
-      <div className="mt-4 grid gap-5 lg:grid-cols-[1fr_260px]">
-        <div className="overflow-hidden rounded-xl border border-line bg-panel">
-          <div className="grid border-b border-line" style={{ gridTemplateColumns: "48px repeat(7, 1fr)" }}>
-            <div />
-            {days.map((day) => (
-              <div
-                key={day}
-                className={`px-2 py-2 text-center text-xs ${
-                  day === today ? "text-accent font-medium" : "text-muted"
-                }`}
+      <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 sm:px-5 sm:pb-5">
+        <div className="flex overflow-hidden rounded-t-xl border border-line border-b-0 bg-panel">
+          <div className="w-10 shrink-0 sm:w-12" />
+          {days.map((day) => (
+            <div
+              key={day}
+              className={`flex-1 border-l border-line px-1 py-1.5 text-center text-[11px] ${
+                day === today ? "font-medium text-accent" : "text-muted"
+              }`}
+            >
+              <div>{weekdayName(day)}</div>
+              <div>{monthDayLabel(day)}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex min-h-0 flex-1 overflow-hidden rounded-b-xl border border-line bg-panel">
+          <div className="relative w-10 shrink-0 sm:w-12">
+            {hours.map((slot, i) => (
+              <span
+                key={slot}
+                className="absolute right-1.5 text-[10px] tabular-nums text-muted"
+                style={{
+                  top: `${slotToPercent(slot)}%`,
+                  transform: i === 0 ? "none" : "translateY(-50%)",
+                  display: slot === VIEW_LAST_SLOT ? "none" : undefined,
+                }}
               >
-                <div>{weekdayName(day)}</div>
-                <div className="text-[11px]">{monthDayLabel(day)}</div>
-              </div>
+                {slotLabel(slot)}
+              </span>
             ))}
           </div>
 
-          <div ref={scrollerRef} className="max-h-[60vh] overflow-y-auto">
-            <div
-              className="no-select grid"
-              style={{ gridTemplateColumns: "48px repeat(7, 1fr)" }}
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
-            >
-              <div>
-                {Array.from({ length: 24 }, (_, hour) => (
+          <div
+            className="no-select relative flex flex-1"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+          >
+            {days.map((day) => (
+              <div
+                key={day}
+                data-day={day}
+                className="relative flex-1 border-l border-line"
+                style={{ background: day === today ? "var(--accent-soft)" : undefined }}
+              >
+                {hours.slice(1, -1).map((slot) => (
                   <div
-                    key={hour}
-                    className="relative text-[10px] text-muted"
-                    style={{ height: SLOT_HEIGHT * 2 }}
-                  >
-                    <span className="absolute -top-1.5 right-1.5">{hour === 0 ? "" : `${hour}:00`}</span>
-                  </div>
+                    key={slot}
+                    className="pointer-events-none absolute inset-x-0 border-t border-line"
+                    style={{ top: `${slotToPercent(slot)}%` }}
+                  />
                 ))}
-              </div>
 
-              {days.map((day) => (
-                <DayColumn
-                  key={day}
-                  day={day}
-                  mine={masks[day] ?? emptyMask()}
-                  others={showOthers ? (othersCounts[day] ?? []) : []}
-                  otherTotal={others.filter((m) => visibleSet.has(m.id)).length}
-                  isToday={day === today}
-                  pendingSlot={rangeStart?.day === day ? rangeStart.slot : null}
-                />
-              ))}
-            </div>
+                {(shared[day] ?? []).map((run) => (
+                  <div
+                    key={`s-${run.start}`}
+                    className="shared-band pointer-events-none absolute inset-x-0"
+                    style={{
+                      top: `${slotToPercent(run.start)}%`,
+                      height: `${slotToPercent(run.end) - slotToPercent(run.start)}%`,
+                    }}
+                  />
+                ))}
+
+                {lanes.map((lane) =>
+                  blocksOf(lane.member, day)
+                    .filter((block) => block.end > VIEW_FIRST_SLOT && block.start < VIEW_LAST_SLOT)
+                    .map((block) => {
+                      const top = slotToPercent(Math.max(block.start, VIEW_FIRST_SLOT));
+                      const bottom = slotToPercent(Math.min(block.end, VIEW_LAST_SLOT));
+                      const color = userColor(lane.member.colorIndex);
+                      const label = `${lane.member.username} ${slotLabel(block.start)}-${slotLabel(block.end)}${
+                        block.note ? ` · ${block.note}` : ""
+                      }`;
+
+                      return (
+                        <div
+                          key={`${lane.member.id}-${block.id}`}
+                          data-own-block={lane.isMe ? "" : undefined}
+                          title={label}
+                          onClick={
+                            lane.isMe
+                              ? () => {
+                                  setError("");
+                                  setDialog({ mode: "edit", day, block });
+                                }
+                              : undefined
+                          }
+                          className={`absolute z-10 overflow-hidden rounded-md ${
+                            lane.isMe ? "cursor-pointer px-1.5 py-0.5" : ""
+                          }`}
+                          style={{
+                            top: `${top}%`,
+                            height: `${Math.max(bottom - top, 1.6)}%`,
+                            left: `${lane.left}%`,
+                            width: `${lane.width}%`,
+                            background: lane.isMe ? color.soft : color.solid,
+                            borderLeft: lane.isMe ? `3px solid ${color.solid}` : undefined,
+                            opacity: lane.isMe ? 1 : 0.85,
+                          }}
+                        >
+                          {lane.isMe ? (
+                            <span
+                              className="block truncate text-[10px] leading-tight"
+                              style={{ color: color.solid }}
+                            >
+                              {block.note ?? slotLabel(block.start)}
+                            </span>
+                          ) : null}
+                        </div>
+                      );
+                    }),
+                )}
+
+                {preview?.day === day ? (
+                  <div
+                    className="pointer-events-none absolute inset-x-1 z-20 rounded-md border-2 border-dashed"
+                    style={{
+                      top: `${slotToPercent(Math.min(preview.from, preview.to))}%`,
+                      height: `${
+                        slotToPercent(Math.max(preview.from, preview.to) + 1) -
+                        slotToPercent(Math.min(preview.from, preview.to))
+                      }%`,
+                      borderColor: "var(--accent)",
+                      background: "var(--accent-soft)",
+                    }}
+                  />
+                ) : null}
+              </div>
+            ))}
           </div>
         </div>
 
-        <aside className="space-y-5">
-          <Panel title={`共同空闲 (${visibleCount} 人)`}>
-            {visibleCount < 2 ? (
-              <p className="text-sm text-muted">至少选中两个人才能算重合。</p>
-            ) : commonSlots.length === 0 ? (
-              <p className="text-sm text-muted">本周没有所有人都有空的时段。</p>
-            ) : (
-              <ul className="space-y-1.5">
-                {commonSlots.map((slot) => (
-                  <li key={`${slot.day}-${slot.start}`} className="flex justify-between text-sm">
-                    <span className="text-muted">
-                      {weekdayName(slot.day)} {monthDayLabel(slot.day)}
-                    </span>
-                    <span className="tabular-nums">
-                      {slotLabel(slot.start)}-{slotLabel(slot.end)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Panel>
-
-          <Panel title="我的本周空闲">
-            {myBlocks.length === 0 ? (
-              <p className="text-sm text-muted">在左边的格子上拖动即可标记。</p>
-            ) : (
-              <ul className="space-y-1.5">
-                {myBlocks.map((block) => (
-                  <li key={`${block.day}-${block.start}`} className="flex justify-between text-sm">
-                    <span className="text-muted">
-                      {weekdayName(block.day)} {monthDayLabel(block.day)}
-                    </span>
-                    <span className="tabular-nums">{blockLabel(block)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Panel>
-
-          <p className="text-xs leading-relaxed text-muted">
-            电脑上拖动格子标记空闲，拖动已标记的格子取消。
-            <br />
-            手机上点一下选起点，再点一下选终点；点已标记的区块可取消。
-            <br />
-            每格 30 分钟，改动自动保存。
-          </p>
-          {rangeStart ? (
-            <p className="text-xs text-accent">
-              已选起点 {weekdayName(rangeStart.day)} {slotLabel(rangeStart.slot)}，再点一下终点。
-            </p>
-          ) : null}
-        </aside>
+        {error && !dialog ? (
+          <p className="pt-2 text-xs text-[#e11d48]">{error}</p>
+        ) : null}
       </div>
 
-      <div className="sr-only" aria-live="polite">
-        {saving ? "保存中" : "已保存"}
-      </div>
-    </div>
-  );
-}
-
-function DayColumn({
-  day,
-  mine,
-  others,
-  otherTotal,
-  isToday,
-  pendingSlot,
-}: {
-  day: string;
-  mine: boolean[];
-  others: number[];
-  otherTotal: number;
-  isToday: boolean;
-  pendingSlot: number | null;
-}) {
-  return (
-    <div className={`border-l border-line ${isToday ? "bg-accent-soft/30" : ""}`}>
-      {Array.from({ length: SLOTS_PER_DAY }, (_, slot) => {
-        const count = others[slot] ?? 0;
-        const ratio = otherTotal > 0 ? count / otherTotal : 0;
-        const isMine = mine[slot];
-        const isPending = pendingSlot === slot;
-
-        return (
-          <div
-            key={slot}
-            data-day={day}
-            data-slot={slot}
-            title={`${slotLabel(slot)} 起 · 其他人 ${count}/${otherTotal}`}
-            className="cursor-pointer border-t"
-            style={{
-              height: SLOT_HEIGHT,
-              // Hour rules would cut through a filled block, so hide them there.
-              borderTopColor: !isMine && slot % 2 === 0 ? "var(--border)" : "transparent",
-              background: isMine
-                ? "var(--accent)"
-                : ratio > 0
-                  ? `color-mix(in srgb, var(--accent) ${Math.round(ratio * 42)}%, transparent)`
-                  : "transparent",
-              outline: isPending ? "2px solid var(--accent)" : undefined,
-              outlineOffset: "-2px",
-            }}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-line bg-panel p-4">
-      <h2 className="mb-3 text-sm font-medium">{title}</h2>
-      {children}
+      {dialog ? (
+        <BlockDialog
+          state={dialog}
+          pending={pending}
+          error={error}
+          onSave={onSaveDialog}
+          onDelete={onDeleteDialog}
+          onClose={() => {
+            setDialog(null);
+            setError("");
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1,8 +1,25 @@
 // A day is divided into 48 slots of 30 minutes. Slot ranges are [start, end).
 export const SLOTS_PER_DAY = 48;
-export const MINUTES_PER_SLOT = 30;
+const MINUTES_PER_SLOT = 30;
 
-export type Block = { start: number; end: number };
+// The calendar only draws the second half of the day, noon to midnight, so
+// that a whole day fits on screen without scrolling.
+export const VIEW_FIRST_SLOT = 24;
+export const VIEW_LAST_SLOT = 48;
+export const VIEW_SLOT_COUNT = VIEW_LAST_SLOT - VIEW_FIRST_SLOT;
+
+export type Block = { id: number; start: number; end: number; note: string | null };
+
+/** Vertical position of a slot inside the drawn day, as a percentage. */
+export function slotToPercent(slot: number): number {
+  return ((slot - VIEW_FIRST_SLOT) / VIEW_SLOT_COUNT) * 100;
+}
+
+/** The slot a point at `ratio` down the drawn day falls in. */
+export function percentToSlot(ratio: number): number {
+  const slot = VIEW_FIRST_SLOT + Math.floor(ratio * VIEW_SLOT_COUNT);
+  return Math.min(VIEW_LAST_SLOT - 1, Math.max(VIEW_FIRST_SLOT, slot));
+}
 
 export function slotLabel(slot: number): string {
   const minutes = slot * MINUTES_PER_SLOT;
@@ -13,30 +30,6 @@ export function slotLabel(slot: number): string {
 
 export function blockLabel(block: Block): string {
   return `${slotLabel(block.start)}-${slotLabel(block.end)}`;
-}
-
-export function maskToBlocks(mask: boolean[]): Block[] {
-  const blocks: Block[] = [];
-  let start = -1;
-  for (let i = 0; i < SLOTS_PER_DAY; i++) {
-    if (mask[i] && start === -1) start = i;
-    if (!mask[i] && start !== -1) {
-      blocks.push({ start, end: i });
-      start = -1;
-    }
-  }
-  if (start !== -1) blocks.push({ start, end: SLOTS_PER_DAY });
-  return blocks;
-}
-
-export function blocksToMask(blocks: Block[]): boolean[] {
-  const mask = new Array<boolean>(SLOTS_PER_DAY).fill(false);
-  for (const b of blocks) {
-    for (let i = Math.max(0, b.start); i < Math.min(SLOTS_PER_DAY, b.end); i++) {
-      mask[i] = true;
-    }
-  }
-  return mask;
 }
 
 // --- Dates are handled as plain YYYY-MM-DD strings in a single shared timezone. ---
@@ -70,14 +63,14 @@ export function todayInZone(timeZone: string): string {
   }).format(new Date());
 }
 
-export function toDateKey(date: Date): string {
+function toDateKey(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
 
-export function fromDateKey(key: string): Date {
+function fromDateKey(key: string): Date {
   const [y, m, d] = key.split("-").map(Number);
   return new Date(y, m - 1, d);
 }
@@ -99,10 +92,6 @@ export function startOfWeek(key: string): string {
   return addDays(key, -offset);
 }
 
-export function weekDays(weekStart: string): string[] {
-  return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-}
-
 const WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 
 export function weekdayName(key: string): string {
@@ -113,12 +102,4 @@ export function weekdayName(key: string): string {
 export function monthDayLabel(key: string): string {
   const [, m, d] = key.split("-");
   return `${Number(m)}/${Number(d)}`;
-}
-
-export function formatWeekRange(weekStart: string): string {
-  const end = addDays(weekStart, 6);
-  const [, sm, sd] = weekStart.split("-");
-  const [ey, em, ed] = end.split("-");
-  if (sm === em) return `${ey} 年 ${Number(sm)} 月 ${Number(sd)} - ${Number(ed)} 日`;
-  return `${ey} 年 ${Number(sm)} 月 ${Number(sd)} 日 - ${Number(em)} 月 ${Number(ed)} 日`;
 }
