@@ -30,11 +30,37 @@ function Shell({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const inner = "w-full max-w-sm rounded-2xl border border-line bg-panel p-5 shadow-2xl";
+  // On a phone the sheet sits at the bottom, where the on-screen keyboard
+  // would cover it. The visual viewport reports how much is hidden.
+  const [keyboard, setKeyboard] = useState(0);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const update = () =>
+      setKeyboard(Math.max(0, Math.round(window.innerHeight - (viewport.height + viewport.offsetTop))));
+    update();
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+    };
+  }, []);
+
+  const inner =
+    "sheet w-full rounded-t-2xl border border-line bg-panel px-5 pt-3 shadow-2xl sm:max-w-sm sm:rounded-2xl sm:pt-5";
+
+  const body = (
+    <>
+      <span className="mx-auto mb-3 block h-1 w-9 rounded-full bg-line-strong sm:hidden" />
+      {children}
+    </>
+  );
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-5"
+      className="fixed inset-x-0 top-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-5"
+      style={{ bottom: keyboard }}
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -47,10 +73,10 @@ function Shell({
             onSubmit?.();
           }}
         >
-          {children}
+          {body}
         </form>
       ) : (
-        <div className={inner}>{children}</div>
+        <div className={inner}>{body}</div>
       )}
     </div>
   );
@@ -95,7 +121,7 @@ export function BlockDialog({
           {state.block.note ?? <span className="text-muted">没写想干什么</span>}
         </p>
 
-        <div className="mt-5 flex justify-end">
+        <div className="sheet-actions flex justify-end">
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             关闭
           </button>
@@ -149,7 +175,7 @@ function EditPanel({
 
       {error ? <p className="mt-3 text-sm text-[#e11d48]">{error}</p> : null}
 
-      <div className="mt-5 flex items-center gap-2">
+      <div className="sheet-actions flex items-center gap-2">
         {state.mode === "edit" ? (
           <button
             type="button"

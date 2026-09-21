@@ -30,13 +30,25 @@ const WIDE_QUERY = "(min-width: 768px)";
 const WIDE_COLUMNS = 7;
 const NARROW_COLUMNS = 3;
 const SWIPE_THRESHOLD = 48;
+const LONG_PRESS_MS = 1000;
+const MOVE_TOLERANCE = 10;
 
 type DayBlocks = Record<string, Block[]>;
 type Preview = { day: string; from: number; to: number };
 type Gesture =
   | { kind: "select"; day: string; rect: DOMRect; from: number; to: number }
   | { kind: "swipe"; x: number }
-  | { kind: "undecided"; day: string; rect: DOMRect; from: number; x: number; y: number };
+  // A touch waits for the long press before it can become a selection, so
+  // that swiping across the calendar never leaves blocks behind.
+  | {
+      kind: "pending";
+      day: string;
+      rect: DOMRect;
+      from: number;
+      x: number;
+      y: number;
+      timer: number;
+    };
 
 export function Planner({
   me,
@@ -182,6 +194,14 @@ export function Planner({
   // --- pointer -------------------------------------------------------------
   const gestureRef = useRef<Gesture | null>(null);
 
+  useEffect(
+    () => () => {
+      const gesture = gestureRef.current;
+      if (gesture?.kind === "pending") window.clearTimeout(gesture.timer);
+    },
+    [],
+  );
+
   function slotAt(rect: DOMRect, clientY: number): number {
     return percentToSlot((clientY - rect.top) / rect.height);
   }
@@ -204,13 +224,23 @@ export function Planner({
     }
 
     if (event.pointerType === "touch") {
+      const day = column.dataset.day;
+      const timer = window.setTimeout(() => {
+        const current = gestureRef.current;
+        if (current?.kind !== "pending") return;
+        gestureRef.current = { kind: "select", day, rect, from, to: from };
+        setPreview({ day, from, to: from });
+        navigator.vibrate?.(15);
+      }, LONG_PRESS_MS);
+
       gestureRef.current = {
-        kind: "undecided",
-        day: column.dataset.day,
+        kind: "pending",
+        day,
         rect,
         from,
         x: event.clientX,
         y: event.clientY,
+        timer,
       };
       return;
     }
@@ -224,18 +254,16 @@ export function Planner({
     const gesture = gestureRef.current;
     if (!gesture) return;
 
-    if (gesture.kind === "undecided") {
+    if (gesture.kind === "pending") {
       const dx = event.clientX - gesture.x;
       const dy = event.clientY - gesture.y;
-      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
-        gestureRef.current = { kind: "swipe", x: gesture.x };
-        return;
-      }
-      if (Math.abs(dy) > 8) {
-        const to = slotAt(gesture.rect, event.clientY);
-        gestureRef.current = { kind: "select", day: gesture.day, rect: gesture.rect, from: gesture.from, to };
-        setPreview({ day: gesture.day, from: gesture.from, to });
-      }
+      if (Math.abs(dx) <= MOVE_TOLERANCE && Math.abs(dy) <= MOVE_TOLERANCE) return;
+
+      // Moving before the press is held long enough means this is a swipe, or
+      // nothing at all. Either way it must not start a selection.
+      window.clearTimeout(gesture.timer);
+      gestureRef.current =
+        Math.abs(dx) > Math.abs(dy) ? { kind: "swipe", x: gesture.x } : null;
       return;
     }
 
@@ -258,7 +286,10 @@ export function Planner({
       return;
     }
 
-    if (gesture.kind === "undecided") return; // a tap that never became a drag
+    if (gesture.kind === "pending") {
+      window.clearTimeout(gesture.timer);
+      return; // released before the long press completed
+    }
 
     // Read the range from the gesture, not from state: a click is a down and
     // an up with no render in between, so the state would still be empty.

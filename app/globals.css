@@ -78,6 +78,32 @@
 }
 
 @layer components {
+  /* A bottom sheet on a phone, a centred card on a wide screen. */
+  .sheet {
+    animation: sheet-up 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  .sheet-actions {
+    margin-top: 1.25rem;
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+  }
+
+  @media (min-width: 640px) {
+    .sheet {
+      animation: sheet-pop 0.16s ease-out;
+    }
+
+    .sheet-actions {
+      padding-bottom: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sheet {
+      animation: none;
+    }
+  }
+
   /* The stretch of a day when everyone shown is free. Deliberately unlike any
      member colour so it reads as a state of the day, not as another person. */
   .shared-band {
@@ -120,6 +146,13 @@
     transition: border-color 0.15s, box-shadow 0.15s;
   }
 
+  /* Below 16px, iOS Safari zooms the page when the field takes focus. */
+  @media (max-width: 639px) {
+    .field {
+      font-size: 16px;
+    }
+  }
+
   .field:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
@@ -160,5 +193,25 @@
 
   .btn-ghost:hover:not(:disabled) {
     background: var(--subtle);
+  }
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes sheet-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
