@@ -111,7 +111,7 @@ function RegisterPanel({ onDone }: { onDone: () => void }) {
   if (step === 1) {
     return (
       <form onSubmit={onCheckCode} className="space-y-4">
-        <Field label="注册密钥" hint="向已加入的成员索取">
+        <Field label="注册密钥" hint="这是...什么啊？">
           <input
             value={code}
             onChange={(e) => setCode(e.target.value)}
