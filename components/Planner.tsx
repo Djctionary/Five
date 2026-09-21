@@ -188,7 +188,7 @@ export function Planner({
 
   function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement;
-    if (target.closest("[data-own-block]")) return; // handled by the block's own click
+    if (target.closest("[data-block]")) return; // handled by the block's own click
     const column = target.closest<HTMLElement>("[data-day]");
     if (!column?.dataset.day) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
@@ -284,7 +284,7 @@ export function Planner({
   }
 
   function onSaveDialog(note: string) {
-    if (!dialog) return;
+    if (!dialog || dialog.mode === "view") return;
     const { day, block, mode } = dialog;
 
     if (mode === "create") {
@@ -307,7 +307,7 @@ export function Planner({
   }
 
   function onDeleteDialog() {
-    if (!dialog) return;
+    if (!dialog || dialog.mode !== "edit") return;
     const { day, block } = dialog;
     setMine((current) => ({
       ...current,
@@ -487,18 +487,18 @@ export function Planner({
                       return (
                         <div
                           key={`${lane.member.id}-${block.id}`}
-                          data-own-block={lane.isMe ? "" : undefined}
+                          data-block=""
                           title={label}
-                          onClick={
-                            lane.isMe
-                              ? () => {
-                                  setError("");
-                                  setDialog({ mode: "edit", day, block });
-                                }
-                              : undefined
-                          }
-                          className={`absolute z-10 overflow-hidden rounded-md ${
-                            lane.isMe ? "cursor-pointer px-1.5 py-0.5" : ""
+                          onClick={() => {
+                            setError("");
+                            setDialog(
+                              lane.isMe
+                                ? { mode: "edit", day, block }
+                                : { mode: "view", day, block, member: lane.member },
+                            );
+                          }}
+                          className={`absolute z-10 cursor-pointer overflow-hidden rounded-md ${
+                            lane.isMe ? "px-1.5 py-0.5" : ""
                           }`}
                           style={{
                             top: `${top}%`,
