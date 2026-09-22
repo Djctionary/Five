@@ -3,22 +3,22 @@
 import { revalidatePath } from "next/cache";
 import { describeDbError, sql } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
-import { SLOTS_PER_DAY, isDateKey } from "@/lib/time";
+import { VIEW_LAST_SLOT, isDateKey } from "@/lib/time";
 import type { ActionResult } from "./auth";
 
 const MAX_NOTE = 120;
 
 function dbFail(error: unknown): ActionResult {
   const { code, message } = describeDbError(error);
-  if (code === "42703") {
-    return { ok: false, error: "数据库缺少 note 字段，请重新访问 /api/init 更新表结构" };
+  if (code === "42703" || code === "23514") {
+    return { ok: false, error: "数据库表结构是旧的，请重新访问 /api/init 更新" };
   }
   return { ok: false, error: code ? `数据库出错 ${code}: ${message}` : message };
 }
 
+/** A note is required, so this returns null only when there is nothing to save. */
 function cleanNote(value: unknown): string | null {
-  const note = String(value ?? "").trim().slice(0, MAX_NOTE);
-  return note || null;
+  return String(value ?? "").trim().slice(0, MAX_NOTE) || null;
 }
 
 /**
@@ -40,11 +40,14 @@ export async function createBlock(
       !Number.isInteger(start) ||
       !Number.isInteger(end) ||
       start < 0 ||
-      end > SLOTS_PER_DAY ||
+      end > VIEW_LAST_SLOT ||
       start >= end
     ) {
       return { ok: false, error: "时间范围无效" };
     }
+
+    const text = cleanNote(note);
+    if (!text) return { ok: false, error: "请输入文本" };
 
     await sql`
       delete from availability
@@ -56,7 +59,7 @@ export async function createBlock(
 
     await sql`
       insert into availability (user_id, day, start_slot, end_slot, note)
-      values (${user.id}, ${day}::date, ${start}, ${end}, ${cleanNote(note)})
+      values (${user.id}, ${day}::date, ${start}, ${end}, ${text})
     `;
 
     revalidatePath("/");
@@ -72,8 +75,11 @@ export async function updateBlockNote(id: number, note: unknown): Promise<Action
     if (!user) return { ok: false, error: "未登录" };
     if (!Number.isInteger(id)) return { ok: false, error: "id 无效" };
 
+    const text = cleanNote(note);
+    if (!text) return { ok: false, error: "请输入文本" };
+
     await sql`
-      update availability set note = ${cleanNote(note)}
+      update availability set note = ${text}
       where id = ${id} and user_id = ${user.id}
     `;
 

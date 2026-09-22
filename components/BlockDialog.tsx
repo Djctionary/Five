@@ -118,7 +118,7 @@ export function BlockDialog({
         <p className="mt-3 text-sm text-muted">{when}</p>
 
         <p className="mt-4 text-base">
-          {state.block.note ?? <span className="text-muted">没写想干什么</span>}
+          {state.block.note ?? <span className="text-muted">没写</span>}
         </p>
 
         <div className="sheet-actions flex justify-end">
@@ -162,12 +162,12 @@ function EditPanel({
       <p className="text-sm text-muted">{when}</p>
 
       <label className="mt-4 block text-sm">
-        这段时间想干什么？
+        干嘛？
         <input
           ref={inputRef}
           value={note}
           onChange={(event) => setNote(event.target.value)}
-          placeholder="随便写点，留空也行"
+          placeholder="请输入文本"
           maxLength={120}
           className="field mt-1.5"
         />
@@ -189,7 +189,7 @@ function EditPanel({
         <button type="button" className="btn btn-ghost ml-auto" onClick={onClose}>
           取消
         </button>
-        <button type="submit" className="btn btn-primary" disabled={pending}>
+        <button type="submit" className="btn btn-primary" disabled={pending || !note.trim()}>
           {pending ? "保存中" : "保存"}
         </button>
       </div>

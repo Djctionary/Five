@@ -90,8 +90,11 @@ export async function register(formData: FormData): Promise<ActionResult> {
     `) as unknown[];
     if (existing.length > 0) return { ok: false, error: "该用户名已被使用" };
 
-    const countRows = (await sql`select count(*)::int as n from users`) as { n: number }[];
-    const colorIndex = (countRows[0]?.n ?? 0) % USER_COLORS.length;
+    // First unused colour, so deleting an account frees its colour again.
+    const used = (await sql`select color_index from users`) as { color_index: number }[];
+    const taken = new Set(used.map((row) => row.color_index));
+    const free = USER_COLORS.findIndex((_, i) => !taken.has(i));
+    const colorIndex = free === -1 ? taken.size % USER_COLORS.length : free;
 
     const rows = (await sql`
       insert into users (username, username_lower, password_hash, avatar_style, avatar_seed, color_index)
@@ -150,13 +153,23 @@ export async function updateProfile(formData: FormData): Promise<ActionResult> {
 
     const avatarStyle = String(formData.get("avatarStyle") ?? "");
     const avatarSeed = String(formData.get("avatarSeed") ?? "").trim();
+    const colorIndex = Number(formData.get("colorIndex"));
 
     if (!isAvatarStyle(avatarStyle)) return { ok: false, error: "头像风格无效" };
     if (!avatarSeed || avatarSeed.length > 40) return { ok: false, error: "头像种子无效" };
+    if (!Number.isInteger(colorIndex) || colorIndex < 0 || colorIndex >= USER_COLORS.length) {
+      return { ok: false, error: "颜色无效" };
+    }
+
+    // Colours identify people on the calendar, so no two may share one.
+    const taken = (await sql`
+      select 1 from users where color_index = ${colorIndex} and id <> ${user.id}
+    `) as unknown[];
+    if (taken.length > 0) return { ok: false, error: "这个颜色已经被别人用了" };
 
     await sql`
       update users
-      set avatar_style = ${avatarStyle}, avatar_seed = ${avatarSeed}
+      set avatar_style = ${avatarStyle}, avatar_seed = ${avatarSeed}, color_index = ${colorIndex}
       where id = ${user.id}
     `;
 

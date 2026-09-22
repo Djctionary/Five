@@ -14,6 +14,7 @@ import {
 import { userColor } from "@/lib/colors";
 import type { AvailabilityMap, Member } from "@/lib/queries";
 import {
+  MIDNIGHT_SLOT,
   VIEW_FIRST_SLOT,
   VIEW_LAST_SLOT,
   addDays,
@@ -397,7 +398,7 @@ export function Planner({
           {columns === WIDE_COLUMNS ? "清空本周" : "清空这三天"}
         </button>
 
-        <ProfileMenu me={me} />
+        <ProfileMenu me={me} members={members} />
       </header>
 
       <div className="flex items-center gap-2 overflow-x-auto px-3 py-2.5 sm:px-5">
@@ -440,7 +441,7 @@ export function Planner({
 
       <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 sm:px-5 sm:pb-5">
         <div className="flex overflow-hidden rounded-t-xl border border-line border-b-0 bg-panel">
-          <div className="w-10 shrink-0 sm:w-12" />
+          <div className="w-12 shrink-0 sm:w-14" />
           {days.map((day) => (
             <div
               key={day}
@@ -455,20 +456,25 @@ export function Planner({
         </div>
 
         <div className="flex min-h-0 flex-1 overflow-hidden rounded-b-xl border border-line bg-panel">
-          <div className="relative w-10 shrink-0 sm:w-12">
-            {hours.map((slot, i) => (
-              <span
-                key={slot}
-                className="absolute right-1.5 text-[10px] tabular-nums text-muted"
-                style={{
-                  top: `${slotToPercent(slot)}%`,
-                  transform: i === 0 ? "none" : "translateY(-50%)",
-                  display: slot === VIEW_LAST_SLOT ? "none" : undefined,
-                }}
-              >
-                {slotLabel(slot)}
-              </span>
-            ))}
+          <div className="relative w-12 shrink-0 sm:w-14">
+            {hours.map((slot, i) => {
+              if (slot === VIEW_LAST_SLOT) return null;
+              const madness = slot === MIDNIGHT_SLOT;
+              return (
+                <span
+                  key={slot}
+                  className={`absolute right-1.5 ${
+                    madness ? "madness-label" : "text-[10px] tabular-nums text-muted"
+                  }`}
+                  style={{
+                    top: `${slotToPercent(slot)}%`,
+                    transform: i === 0 ? "none" : "translateY(-50%)",
+                  }}
+                >
+                  {madness ? "彻底疯狂" : slotLabel(slot)}
+                </span>
+              );
+            })}
           </div>
 
           <div
@@ -485,13 +491,23 @@ export function Planner({
                 className="relative flex-1 border-l border-line"
                 style={{ background: day === today ? "var(--accent-soft)" : undefined }}
               >
-                {hours.slice(1, -1).map((slot) => (
-                  <div
-                    key={slot}
-                    className="pointer-events-none absolute inset-x-0 border-t border-line"
-                    style={{ top: `${slotToPercent(slot)}%` }}
-                  />
-                ))}
+                {hours.slice(1, -1).map((slot) =>
+                  slot === MIDNIGHT_SLOT ? null : (
+                    <div
+                      key={slot}
+                      className="pointer-events-none absolute inset-x-0 border-t border-line"
+                      style={{ top: `${slotToPercent(slot)}%` }}
+                    />
+                  ),
+                )}
+
+                <div
+                  className="madness-band pointer-events-none absolute inset-x-0"
+                  style={{
+                    top: `${slotToPercent(MIDNIGHT_SLOT)}%`,
+                    bottom: 0,
+                  }}
+                />
 
                 {(shared[day] ?? []).map((run) => (
                   <div

@@ -5,7 +5,10 @@ const MINUTES_PER_SLOT = 30;
 // The calendar only draws the second half of the day, noon to midnight, so
 // that a whole day fits on screen without scrolling.
 export const VIEW_FIRST_SLOT = 24;
-export const VIEW_LAST_SLOT = 48;
+// One slot past midnight: the last hour of the grid is the 彻底疯狂 row,
+// which runs from 24:00 to 01:00 and belongs to the night it started.
+export const VIEW_LAST_SLOT = 50;
+export const MIDNIGHT_SLOT = 48;
 export const VIEW_SLOT_COUNT = VIEW_LAST_SLOT - VIEW_FIRST_SLOT;
 
 export type Block = { id: number; start: number; end: number; note: string | null };
@@ -23,7 +26,8 @@ export function percentToSlot(ratio: number): number {
 
 export function slotLabel(slot: number): string {
   const minutes = slot * MINUTES_PER_SLOT;
-  const h = Math.floor(minutes / 60);
+  // Slots past midnight belong to the small hours, so the hour wraps.
+  const h = Math.floor(minutes / 60) % 24;
   const m = minutes % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
